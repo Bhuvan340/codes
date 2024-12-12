@@ -1,0 +1,87 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ #include <arpa/inet.h>
+#include <openssl/ssl.h>
+ #include <openssl/err.h>
+ #define PORT 4433
+ #define BUFFER_SIZE 1024
+ void handle_errors() {
+ ERR_print_errors_fp(stderr);
+ abort();
+ }
+ int main() {
+ SSL_CTX *ctx;
+ SSL *ssl;
+ int server_fd, client_fd;
+ struct sockaddr_in server_addr, client_addr;
+ socklen_t addr_len = sizeof(client_addr);
+ char buffer[BUFFER_SIZE];
+ // Initialize OpenSSL
+ SSL_library_init();
+ OpenSSL_add_all_algorithms();
+ SSL_load_error_strings();
+ ctx = SSL_CTX_new(TLS_server_method());
+ if (!ctx) {
+ handle_errors();
+ }
+ // Load certificates
+ if (SSL_CTX_use_certificate_file(ctx, "server.crt", SSL_FILETYPE_PEM) <= 0 ||
+ SSL_CTX_use_PrivateKey_file(ctx, "server.key", SSL_FILETYPE_PEM) <= 0) {
+ handle_errors();
+ }
+ // Create server socket
+ server_fd = socket(AF_INET, SOCK_STREAM, 0);
+ if (server_fd < 0) {
+ perror("socket");
+ exit(EXIT_FAILURE);
+ }
+ // Bind the socket
+ memset(&server_addr, 0, sizeof(server_addr));
+ server_addr.sin_family = AF_INET;
+ server_addr.sin_addr.s_addr = INADDR_ANY;
+ server_addr.sin_port = htons(PORT);
+ if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+ perror("bind");
+ close(server_fd);
+ exit(EXIT_FAILURE);
+}
+ // Listen for incoming connections
+ if (listen(server_fd, 5) < 0) {
+ perror("listen");
+ close(server_fd);
+ exit(EXIT_FAILURE);
+ }
+ printf("Secure server is running on port %d...\n", PORT);
+ while (1) {
+ // Accept incoming connection
+ client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len);
+ if (client_fd < 0) {
+ perror("accept");
+ continue;
+ }
+ // Create SSL structure
+ ssl = SSL_new(ctx);
+ SSL_set_fd(ssl, client_fd);
+ // Accept SSL connection
+ if (SSL_accept(ssl) <= 0) {
+ ERR_print_errors_fp(stderr);
+ } else {
+ // Communicate with client
+ int bytes;
+ while ((bytes = SSL_read(ssl, buffer, sizeof(buffer))) > 0) {
+ buffer[bytes] = '\0'; // Null-terminate the received string
+ printf("Received: %s\n", buffer);
+ SSL_write(ssl, "Message received\n", 17);
+ }
+ }
+ // Cleanup
+ SSL_free(ssl);
+ close(client_fd);
+ }
+ // Clean up
+ SSL_CTX_free(ctx);
+ close(server_fd);
+ return 0;
+ }
