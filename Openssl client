@@ -1,0 +1,70 @@
+#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ #include <arpa/inet.h>
+ #include <openssl/ssl.h>
+ #include <openssl/err.h>
+ #define SERVER_IP "127.0.0.1"
+ #define PORT 4433
+ #define BUFFER_SIZE 1024
+ void handle_errors() {
+ ERR_print_errors_fp(stderr);
+ abort();
+ }
+ int main() {
+ SSL_CTX *ctx;
+ SSL *ssl;
+ int sock_fd;
+ struct sockaddr_in server_addr;
+ char buffer[BUFFER_SIZE];
+ // Initialize OpenSSL
+ SSL_library_init();
+ OpenSSL_add_all_algorithms();
+ SSL_load_error_strings();
+ ctx = SSL_CTX_new(TLS_client_method());
+ if (!ctx) {
+ handle_errors();
+ }
+ // Create socket
+ sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+ if (sock_fd < 0) {
+ perror("socket");
+ exit(EXIT_FAILURE);
+ }
+ // Connect to server
+ memset(&server_addr, 0, sizeof(server_addr));
+ server_addr.sin_family = AF_INET;
+ server_addr.sin_port = htons(PORT);
+ inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr);
+ if (connect(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+ perror("connect");
+ close(sock_fd);
+ exit(EXIT_FAILURE);
+}
+ // Create SSL structure
+ ssl = SSL_new(ctx);
+ SSL_set_fd(ssl, sock_fd);
+ // Initiate SSL connection
+ if (SSL_connect(ssl) <= 0) {
+ ERR_print_errors_fp(stderr);
+ } else {
+ printf("Connected to secure server.\n");
+ // Communicate with server
+ while (1) {
+ printf("> ");
+ fgets(buffer, BUFFER_SIZE, stdin);
+ SSL_write(ssl, buffer, strlen(buffer));
+ int bytes = SSL_read(ssl, buffer, sizeof(buffer));
+ if (bytes > 0) {
+ buffer[bytes] = '\0'; // Null-terminate the received string
+ printf("Server: %s", buffer);
+ }
+ }
+ }
+ // Cleanup
+ SSL_free(ssl);
+ close(sock_fd);
+ SSL_CTX_free(ctx);
+ return 0;
+ }
